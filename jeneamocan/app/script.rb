@@ -1,16 +1,21 @@
 require 'pry'
 require 'watir'
 require 'nokogiri'
+require 'open-uri'
 require 'json'
 
 class WebBanking
+
+	BASE_URL	= "https://web.vb24.md/wb/"
+	DATA_DIR 	= "data"
+
 	def browser
 		@browser ||= Watir::Browser.new :chrome
 	end
 
 	def run
-		browser.goto("https://web.vb24.md/wb/")
-		authentication
+		browser.goto(BASE_URL)
+		authentication_check
 	end
 
 	def authentication
@@ -33,49 +38,95 @@ class WebBanking
 		end
 	end
 
+	def authentication_check
+		if browser.text_field(name: "login").present?
+			puts "Authentication required"
+			authentication
+		else
+		end
+	end
+
 	def info
 		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.NEW_CARDS_ACCOUNTS")
-		name = browser.div(class: %w"user-info has-last-entry").span(class: "user-name").text
+		name = browser.div(class: "main-info").a(class: "name").text
 		balance = browser.div(class: "primary-balance").span(class: "amount").text
 		currency = browser.div(class: "primary-balance").span(class: %w"amount currency").text
-		puts ["**Account**", "- #{name}", " -#{currency}", "- #{balance}"]
+		nature = browser.div(class: %w"section-title h-small").text.downcase.capitalize
+		puts ["**Account**", "- #{name}", "- #{currency}", "- #{balance}", "- #{nature}"]
 	end
 end
 
 class Accounts < WebBanking
+
+	attr_reader :account
+
+	def initialize
+		browser.goto(BASE_URL)
+		authentication_check
+		account_info
+		store
+	end
+
 	def account_info
-		if browser.text_field(name: "login").present?
-			puts "Authentication required"
-			authentication
-		else
-		end
-		browser.a(href: "#menu/MAIN_215.NEW_CARDS_ACCOUNTS").click
-		name = browser.div(class: %w"user-info has-last-entry").span(class: "user-name").text
+		@account = account_check
+	end
+
+	def account_check
+		authentication_check
+		puts "Fetching account informatrion"
+		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.NEW_CARDS_ACCOUNTS")
+		name = browser.div(class: "main-info").a(class: "name").text
 		balance = browser.div(class: "primary-balance").span(class: "amount").text
 		currency = browser.div(class: "primary-balance").span(class: %w"amount currency").text
-		puts JSON.pretty_generate ({"accounts": [name: name, currency: currency, balance: balance]})
+		nature = browser.div(class: %w"section-title h-small").text.downcase.capitalize
+		{self.class.name.downcase => [name: name, currency: currency, balance: balance, nature: nature]}
 	end
+
+	def store
+		Dir.mkdir(DATA_DIR) unless File.exists?(DATA_DIR)
+   		file_name = "#{DATA_DIR}/#{File.basename('account')}.json"
+      	File.open(file_name, 'w'){|file| file.write(@account.to_json)}
+       	puts "Saved to #{file_name}"
+	end
+
 end
 
 class Transactions < WebBanking
+
+	attr_reader :transaction
+
+	def transaction_info
+		@transaction = last_transaction
+	end
+
+	def initialize
+		browser.goto(BASE_URL)
+		authentication_check
+		transaction_info
+		store
+	end
+
 	def last_transaction
-		if browser.text_field(name: "login").present?
-			puts "Authentication required"
-			authentication
-		else
-		end
-		browser.a(href: "#menu/MAIN_215.CP_HISTORY").click
+		authentication_check
+		puts "Fetching latest transaction"
+		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.CP_HISTORY")
 		month = browser.div(class: "month-delimiter").text
 		day = browser.div(class: "day-header").text.split[0]
-		date = day + " " + month
 		time = browser.span(class: "history-item-time").text
+		date = day + " " + month + " " + time
 		description = browser.a(class: "operation-details").text
 		amount = browser.span(class: %w"history-item-amount transaction").text
-		puts JSON.pretty_generate ({"transactions": [date: date, time: time, description: description, amount: amount]})
+		{self.class.name.downcase => [date: date, description: description, amount: amount]}
 	end
+
+	def store
+		Dir.mkdir(DATA_DIR) unless File.exists?(DATA_DIR)
+   		file_name = "#{DATA_DIR}/#{File.basename('transactions')}.json"
+      	File.open(file_name, 'w'){|file| file.write(@transaction.to_json)}
+       	puts "Saved to #{file_name}"
+    end
+
 end
 
-jeneamocan = Accounts.new
-jeneamocan.run
-
-binding.pry
+account 	= Accounts.new
+transaction = Transactions.new
