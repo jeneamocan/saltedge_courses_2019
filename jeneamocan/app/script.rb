@@ -4,64 +4,89 @@ require 'nokogiri'
 require 'open-uri'
 require 'json'
 
-class WebBanking
+class VB_WebBanking
+  BASE_URL = 'https://web.vb24.md/wb/'.freeze
+  DATA_DIR = 'data'.freeze
 
-	BASE_URL	= "https://web.vb24.md/wb/"
-	DATA_DIR 	= "data"
+  def browser
+    @browser ||= Watir::Browser.new :chrome
+  end
 
-	def browser
-		@browser ||= Watir::Browser.new :chrome
-	end
+  def run
+    browser.goto(BASE_URL)
+    authentication_check
+  end
 
-	def run
-		browser.goto(BASE_URL)
-		authentication_check
-	end
+  def authentication
+    unless File.exist?('data/login.json')
+    puts "Enter your login"
+    browser.text_field(name: "login").set(gets.chomp)
+    puts "Enter your password"
+    browser.text_field(name: "password").set(gets.chomp)
+    if browser.text_field(name: "captcha").present?
+      puts "Enter CAPTCHA"
+      browser.text_field(name: "captcha").set(gets.chomp)
+      else
+      end
+    else
+      file = File.read('data/login.json')
+      json = JSON.parse(file)
+      login = json["login"]
+      password = json["password"]
+      browser.text_field(name: "login").set(login)
+      browser.text_field(name: "password").set(password)
+    end
+    browser.button(class: "wb-button").click
+    sleep(3)
+    if browser.div(class: "block__cards-accounts").exist?
+      puts "Authentication successful"
+    else
+      puts "Invalid username or password, try again"
+      authentication
+    end
+  end
 
-	def authentication
-		puts "Enter your login"
-		browser.text_field(name: "login").set(gets.chomp)
-		puts "Enter your password"
-		browser.text_field(name: "password").set(gets.chomp)
-		if browser.text_field(name: "captcha").present?
-			puts "Enter CAPTCHA"
-			browser.text_field(name: "captcha").set(gets.chomp)
-		else
-		end
-		browser.button(class: "wb-button").click
-		sleep(3)
-		if browser.div(class: "block__cards-accounts").exist?
-			puts "Authentication successful"
-		else
-			puts "Invalid username or password, try again"
-			authentication
-		end
-	end
+  def authentication_check
+    if browser.text_field(name: "login").present?
+      puts "Authentication required"
+      authentication
+    else
+    end
+  end
 
-	def authentication_check
-		if browser.text_field(name: "login").present?
-			puts "Authentication required"
-			authentication
-		else
-		end
-	end
-
-	def info
-		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.NEW_CARDS_ACCOUNTS")
-		name = browser.div(class: "main-info").a(class: "name").text
-		balance = browser.div(class: "primary-balance").span(class: "amount").text
-		currency = browser.div(class: "primary-balance").span(class: %w"amount currency").text
-		nature = browser.div(class: %w"section-title h-small").text.downcase.capitalize
-		puts ["**Account**", "- #{name}", "- #{currency}", "- #{balance}", "- #{nature}"]
-	end
+  def info
+    browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.NEW_CARDS_ACCOUNTS")
+    name = browser.div(class: "main-info").a(class: "name").text
+    balance = browser.div(class: "primary-balance").span(class: "amount").text
+    currency = browser.div(class: "primary-balance").span(class: %w"amount currency").text
+    nature = browser.div(class: %w"section-title h-small").text.downcase.capitalize
+    puts ["**Account**", "- #{name}", "- #{currency}", "- #{balance}", "- #{nature}"]
+  end
 
 	def parse
 		Nokogiri::HTML.parse(browser.html)
 	end
+
+	def store_result
+		if File.exist?('data/accounts.json') && File.exist?('data/transactions.json')
+			accounts = File.read('data/accounts.json')
+			transactions = File.read('data/transactions.json')
+    	accounts_json = JSON.parse(accounts)
+   	  transactions_json = JSON.parse(transactions)
+   	  result = accounts_json
+			result["accounts"][0]["transactions"] = transactions_json["transactions"]
+			result
+			Dir.mkdir(DATA_DIR) unless File.exists?(DATA_DIR)
+   		file_name = "#{DATA_DIR}/#{File.basename('result')}.json"
+    	File.open(file_name, 'w'){|file| file.write(JSON.pretty_generate(result))}
+    	puts "Accounts with transactions saved to #{file_name}"
+    else
+    	puts "Information is absent"
+    end
+  end
 end
 
-class Accounts < WebBanking
-
+class Accounts < VB_WebBanking
 	attr_reader :account
 
 	def initialize
@@ -74,33 +99,40 @@ class Accounts < WebBanking
 		@account = account_check
 	end
 
-	def account_check
+  def account_check
 		authentication_check
 		puts "Fetching account informatrion"
 		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.NEW_CARDS_ACCOUNTS")
-		name = browser.div(class: "main-info").a(class: "name").text
-		balance = browser.div(class: "primary-balance").span(class: "amount").text
-		currency = browser.div(class: "primary-balance").span(class: %w"amount currency").text
-		nature = browser.div(class: %w"section-title h-small").text.downcase.capitalize
-		{self.class.name.downcase => [{name: name, currency: currency, balance: balance, nature: nature}]}
+		page = parse
+		hash = {"accounts" => []}
+		i = page.css('div[class="contracts-section"]').map do |i|
+			unless i.css('div[class="section-title no-data-error"]').any?
+				name = i.css('div[class="main-info"]').css('a[class="name"]').text
+				balance = i.css('div[class="primary-balance"]').css('span[class="amount"]').text
+				currency =  i.css('div[class="primary-balance"]').children.last.text
+				nature = i.css('div[class="section-title h-small"]').text.downcase.capitalize
+				res = {name: name, currency: currency, balance: balance, nature: nature}
+				hash["accounts"] << res
+			else
+			end
+		end
+		hash
 	end
 
 	def store
 		Dir.mkdir(DATA_DIR) unless File.exists?(DATA_DIR)
-   		file_name = "#{DATA_DIR}/#{File.basename('accounts')}.json"
-      	File.open(file_name, 'w'){|file| file.write(JSON.pretty_generate(@account))}
-       	puts "Saved to #{file_name}"
+   	file_name = "#{DATA_DIR}/#{File.basename('accounts')}.json"
+    File.open(file_name, 'w'){|file| file.write(JSON.pretty_generate(@account))}
+    puts "Accounts saved to #{file_name}"
 	end
-
 end
 
-class Transactions < WebBanking
-
+class Transactions < VB_WebBanking
 	attr_reader :transaction, :transactions
 
 	def transaction_info
 		@last_transaction = last_transaction
-		@transactions = transactions
+		@transactions = transactions_2months
 	end
 
 	def initialize
@@ -122,10 +154,10 @@ class Transactions < WebBanking
 		{"transactions" => [{date: date, description: description, amount: amount}]}
 	end
 
-    def transactions
-    	set_date
-    	puts "Fetching transactions for the last two months"
-    	sleep(2)
+  def transactions_2months
+  	set_date
+    puts "Fetching transactions for the last two months"
+    sleep(2)
 		page = parse
 		hash = {"transactions" => []}
 		page.css('li[class="history-item success "]').map do |i|
@@ -150,12 +182,12 @@ class Transactions < WebBanking
 
 	def store
 		Dir.mkdir(DATA_DIR) unless File.exists?(DATA_DIR)
-   		file_name = "#{DATA_DIR}/#{File.basename('transactions')}.json"
-      	File.open(file_name, 'w'){|file| file.write(JSON.pretty_generate(@transactions))}
-       	puts "Saved to #{file_name}"
-    end
+   	file_name = "#{DATA_DIR}/#{File.basename('transactions')}.json"
+    File.open(file_name, 'w'){|file| file.write(JSON.pretty_generate(@transactions))}
+    puts "Transactions saved to #{file_name}"
+  end
 
-    private
+  private
 
 	def set_date
 		authentication_check
@@ -165,8 +197,8 @@ class Transactions < WebBanking
 		browser.a(class: %w"ui-datepicker-prev ui-corner-all").click
 		browser.a(text: "#{current_day}").click
 	end
-
 end
 
-account 	= Accounts.new
-transaction = Transactions.new
+jeneamocan = Accounts.new
+jeneamocan_transactions = Transactions.new
+jeneamocan.store_result
