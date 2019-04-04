@@ -54,6 +54,10 @@ class WebBanking
 		nature = browser.div(class: %w"section-title h-small").text.downcase.capitalize
 		puts ["**Account**", "- #{name}", "- #{currency}", "- #{balance}", "- #{nature}"]
 	end
+
+	def parse
+		Nokogiri::HTML.parse(browser.html)
+	end
 end
 
 class Accounts < WebBanking
@@ -61,8 +65,7 @@ class Accounts < WebBanking
 	attr_reader :account
 
 	def initialize
-		browser.goto(BASE_URL)
-		authentication_check
+		run
 		account_info
 		store
 	end
@@ -79,13 +82,13 @@ class Accounts < WebBanking
 		balance = browser.div(class: "primary-balance").span(class: "amount").text
 		currency = browser.div(class: "primary-balance").span(class: %w"amount currency").text
 		nature = browser.div(class: %w"section-title h-small").text.downcase.capitalize
-		{self.class.name.downcase => [name: name, currency: currency, balance: balance, nature: nature]}
+		{self.class.name.downcase => [{name: name, currency: currency, balance: balance, nature: nature}]}
 	end
 
 	def store
 		Dir.mkdir(DATA_DIR) unless File.exists?(DATA_DIR)
-   		file_name = "#{DATA_DIR}/#{File.basename('account')}.json"
-      	File.open(file_name, 'w'){|file| file.write(@account.to_json)}
+   		file_name = "#{DATA_DIR}/#{File.basename('accounts')}.json"
+      	File.open(file_name, 'w'){|file| file.write(JSON.pretty_generate(@account))}
        	puts "Saved to #{file_name}"
 	end
 
@@ -93,15 +96,15 @@ end
 
 class Transactions < WebBanking
 
-	attr_reader :transaction
+	attr_reader :transaction, :transactions
 
 	def transaction_info
-		@transaction = last_transaction
+		@last_transaction = last_transaction
+		@transactions = transactions
 	end
 
 	def initialize
-		browser.goto(BASE_URL)
-		authentication_check
+		run
 		transaction_info
 		store
 	end
@@ -116,15 +119,52 @@ class Transactions < WebBanking
 		date = day + " " + month + " " + time
 		description = browser.a(class: "operation-details").text
 		amount = browser.span(class: %w"history-item-amount transaction").text
-		{self.class.name.downcase => [date: date, description: description, amount: amount]}
+		{"transactions" => [{date: date, description: description, amount: amount}]}
 	end
+
+    def transactions
+    	set_date
+    	puts "Fetching transactions for the last two months"
+    	sleep(2)
+		page = parse
+		hash = {"transactions" => []}
+		page.css('li[class="history-item success "]').map do |i|
+			month = i.xpath('../../preceding-sibling::div[@class = "month-delimiter"]').last.text
+			day = i.parent.parent.css('div[class = "day-header"]').text
+			time = i.css('span[class= "history-item-time"]').text
+			date = day + " " + month + " " + time
+			description = i.css('span[class="history-item-description"]').text.split.join(" ")
+			if not i.css('span[class="history-item-amount transaction income"]').text.empty?
+				amount = i.css('span[class="history-item-amount transaction income"]').text
+			elsif not i.css('span[class="history-item-amount total"]').text.empty?
+				amount = i.css('span[class="history-item-amount total"]').text
+			elsif not i.css('span[class="history-item-amount transaction "]').text.empty?
+				amount = i.css('span[class="history-item-amount transaction "]').text
+			else 
+			end
+		res = {date: date, description: description, amount: amount}
+		hash["transactions"] << res
+		end
+		hash
+	end	
 
 	def store
 		Dir.mkdir(DATA_DIR) unless File.exists?(DATA_DIR)
    		file_name = "#{DATA_DIR}/#{File.basename('transactions')}.json"
-      	File.open(file_name, 'w'){|file| file.write(@transaction.to_json)}
+      	File.open(file_name, 'w'){|file| file.write(JSON.pretty_generate(@transactions))}
        	puts "Saved to #{file_name}"
     end
+
+    private
+
+	def set_date
+		authentication_check
+		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.CP_HISTORY")
+		current_day = Date.today.day.to_s
+		browser.input(name: 'from').click
+		browser.a(class: %w"ui-datepicker-prev ui-corner-all").click
+		browser.a(text: "#{current_day}").click
+	end
 
 end
 
