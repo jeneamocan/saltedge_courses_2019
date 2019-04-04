@@ -155,6 +155,8 @@ class Transactions < VB_WebBanking
 	end
 
   def transactions_2months
+  	authentication_check
+		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.CP_HISTORY")
   	set_date
     puts "Fetching transactions for the last two months"
     sleep(2)
@@ -190,12 +192,10 @@ class Transactions < VB_WebBanking
   private
 
 	def set_date
-		authentication_check
-		browser.goto("https://web.vb24.md/wb/#menu/MAIN_215.CP_HISTORY")
-		current_day = Date.today.day.to_s
+		day = Date.today.prev_month(2).day.to_s
 		browser.input(name: 'from').click
 		browser.a(class: %w"ui-datepicker-prev ui-corner-all").click
-		browser.a(text: "#{current_day}").click
+		browser.a(text: "#{day}").click
 	end
 end
 
